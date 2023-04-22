@@ -1,0 +1,67 @@
+# Jenkinsfile
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'npm ci' 
+                sh 'npm run build' 
+               
+                sh 'docker build -t form-somativa:latest . --build-arg BASE_IMAGE=ubuntu:latest'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'npm run test' 
+            }
+        }
+
+        stage('SAST') {
+            steps {             
+                sh 'docker run --rm -v $(pwd):/zap/wrk:rw -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:3000 -g gen.conf -r report.html'
+            }
+        }
+
+        stage('Deploy to Heroku') {
+            steps {              
+                sh 'docker build -t form-somativa:latest .'
+           
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                    sh 'docker login -u $DOCKER_HUB_USERNAME -p $DOCKER_HUB_PASSWORD'
+                }
+            
+                sh 'docker push form-somativa:latest'
+          
+                withCredentials([usernamePassword(credentialsId: 'heroku-credentials', usernameVariable: 'HEROKU_EMAIL', passwordVariable: 'HEROKU_API_KEY')]) {
+                    sh 'heroku container:login'
+                    sh 'heroku container:push web -a form-somativa' 
+                    sh 'heroku container:release web -a form-somativa' 
+                    sh 'heroku ps:scale web=1 -a form-somativa'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Olá Mundo!'
+        }
+
+        success {           
+            echo 'Build, testes e SAST executados com sucesso!'
+        }
+
+        failure {           
+            echo 'Falha na build, nos testes ou no SAST.'
+        }
+    }
+}
